@@ -1,3 +1,19 @@
 {
-  "recent_reports": []
+  "recent_reports": [
+    {
+      "date": "2026-06-30",
+      "generated_at": "2026-06-30 18:55:33 +08:00",
+      "theme": "teal-mist",
+      "repos": [
+        "calesthio/openmontage",
+        "deusdata/codebase-memory-mcp",
+        "panniantong/agent-reach",
+        "google-labs-code/design.md",
+        "topoteretes/cognee",
+        "zhulinsen/daily_stock_analysis",
+        "jcodesmore/ai-website-cloner-template",
+        "mukul975/anthropic-cybersecurity-skills"
+      ]
+    }
+  ]
 }
