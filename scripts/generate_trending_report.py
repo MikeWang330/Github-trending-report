@@ -50,6 +50,19 @@ DEFAULT_KEYWORDS = (
     "copilot",
 )
 DEFAULT_TOPIC_LABEL = "AI"
+CUSTOM_BROAD_KEYWORDS = {"ai", "agent", "agents", "llm", "gpt", "automation"}
+KEYWORD_ALIASES = {
+    "饮料": ("beverage", "drink"),
+    "快消": ("consumer", "retail", "fmcg"),
+    "消费品": ("consumer", "retail"),
+    "商业分析": ("analytics", "business intelligence", "dashboard"),
+    "经营分析": ("analytics", "dashboard", "forecast"),
+    "渠道": ("retail", "sales", "ecommerce"),
+    "品牌": ("brand", "marketing"),
+    "销售": ("sales", "crm"),
+    "定价": ("pricing",),
+    "预测": ("forecast",),
+}
 BEIJING = timezone(timedelta(hours=8))
 THEMES = [
     ("teal-mist", "#0f766e", "linear-gradient(135deg,#d9f7f2 0%,#f8fbff 45%,#e7f1ff 100%)"),
@@ -143,12 +156,16 @@ def parse_trending(page: str) -> list[Repo]:
 def parse_keywords(value: str | None) -> tuple[str, ...]:
     if not value:
         return DEFAULT_KEYWORDS
-    keywords = [item.strip().lower() for item in re.split(r"[,，\n;；]+", value) if item.strip()]
+    raw_keywords = [item.strip().lower() for item in re.split(r"[,，\n;；]+", value) if item.strip()]
+    keywords: list[str] = []
+    for keyword in raw_keywords:
+        keywords.append(keyword)
+        keywords.extend(KEYWORD_ALIASES.get(keyword, ()))
     return tuple(dict.fromkeys(keywords)) or DEFAULT_KEYWORDS
 
 
 def topic_label(keywords: tuple[str, ...]) -> str:
-    configured = os.getenv("TOPIC_LABEL") or os.getenv("REPORT_TOPIC")
+    configured = os.getenv("TOPIC_LABEL") or os.getenv("topic_label") or os.getenv("REPORT_TOPIC") or os.getenv("report_topic")
     if configured:
         return configured.strip()
     if keywords == DEFAULT_KEYWORDS:
@@ -166,12 +183,21 @@ def keyword_relevance_score(repo: Repo, keywords: tuple[str, ...]) -> int:
     text = f"{repo.name} {repo.author} {repo.description} {repo.language}".lower()
     tokens = set(re.findall(r"[a-z0-9]+", text))
     score = 0
+    focused_score = 0
+    has_focused_keywords = keywords != DEFAULT_KEYWORDS and any(keyword not in CUSTOM_BROAD_KEYWORDS for keyword in keywords)
     for keyword in keywords:
+        keyword_score = 0
         if " " in keyword or "-" in keyword:
             if keyword in text:
-                score += 3
+                keyword_score = 3
         elif keyword in tokens:
-            score += 2
+            keyword_score = 2
+        score += keyword_score
+        if keyword not in CUSTOM_BROAD_KEYWORDS:
+            focused_score += keyword_score
+
+    if has_focused_keywords and focused_score == 0:
+        return 0
 
     # Very short tokens like "ai" and "ml" are noisy, so require an extra signal
     # unless the project name itself clearly uses the term.
@@ -249,6 +275,63 @@ def enrich_with_openai(repos: list[Repo], label: str) -> list[Repo]:
         repo.usage = str(item.get("usage") or repo.usage).strip()
     print(f"已使用 OpenAI Responses API 生成中文解读，模型：{model}")
     return repos
+
+
+def apply_topic_context(repos: list[Repo], label: str, keywords: tuple[str, ...]) -> list[Repo]:
+    if keywords == DEFAULT_KEYWORDS:
+        return repos
+    for repo in repos:
+        repo.what, repo.features, repo.usage = explain_project_for_topic(repo, label, keywords)
+    return repos
+
+
+def explain_project_for_topic(repo: Repo, label: str, keywords: tuple[str, ...]) -> tuple[str, list[str], str]:
+    text = " ".join(keywords).lower()
+    clean_desc = repo.description.strip().rstrip(".。")
+    summary = plain_summary(clean_desc) if clean_desc and clean_desc != "暂无公开简介" else "提供可复用的开源能力"
+
+    if any(word in text for word in ("consumer", "retail", "beverage", "food", "ecommerce", "brand", "marketing", "sales", "pricing", "crm")):
+        return (
+            f"{repo.name} 是一个可用于{label}方向的开源项目，主要价值在于{summary}。",
+            [
+                "帮助团队观察消费者、渠道、品牌或销售相关数据",
+                "可作为商业分析、增长分析或运营看板的技术参考",
+                "适合和内部数据源、自动化流程或 AI 分析能力结合",
+            ],
+            "适合商业分析、渠道运营、品牌增长和数据产品团队，用来做趋势跟踪、经营分析、销售预测或自动化报告。",
+        )
+
+    if any(word in text for word in ("analytics", "dashboard", "data", "forecast", "bi", "warehouse", "pipeline")):
+        return (
+            f"{repo.name} 是一个偏数据分析与看板建设的开源项目，主要用于{summary}。",
+            [
+                "支持数据采集、整理、展示或分析链路中的某一环节",
+                "可帮助团队更快搭建可视化报表或分析工作流",
+                "适合沉淀为内部数据产品、自动化脚本或运营监控工具",
+            ],
+            "适合数据分析师、BI 团队、经营分析和业务中台，用来提升日常取数、看板、预测和复盘效率。",
+        )
+
+    if any(word in text for word in ("agent", "automation", "workflow", "llm", "ai", "rag", "gpt")):
+        return (
+            f"{repo.name} 是一个与{label}相关的智能化工具项目，主要用于{summary}。",
+            [
+                "把模型、工具或业务动作串成可执行流程",
+                "减少重复信息整理、生成和通知工作",
+                "适合改造成内部助手或自动化分析工具",
+            ],
+            "适合研发、运营、商业分析和数据团队，用来把重复分析、资料整理和报告生成交给 AI 辅助完成。",
+        )
+
+    return (
+        f"{repo.name} 是一个与{label}相关的开源项目，主要用于{summary}。",
+        [
+            f"围绕 {label} 方向提供可复用能力",
+            "适合开发者根据业务需求进行二次改造",
+            "可作为同类项目选型、技术调研或原型验证参考",
+        ],
+        f"适合关注 {label} 方向的业务、产品、数据和研发团队，用来做技术调研、效率工具建设或内部系统原型。",
+    )
 
 
 def extract_response_text(result: dict) -> str:
@@ -536,11 +619,12 @@ def generate(args: argparse.Namespace) -> None:
     today = datetime.now(BEIJING).strftime("%Y-%m-%d")
     page = fetch(TRENDING_URL)
     all_repos = parse_trending(page)
-    keywords = parse_keywords(args.key_words or os.getenv("KEY_WORDS"))
+    keywords = parse_keywords(args.key_words or os.getenv("KEY_WORDS") or os.getenv("key_words"))
     label = topic_label(keywords)
     repos = filter_repos_by_keywords(all_repos, keywords, args.limit)
     if not repos:
         raise RuntimeError(f"未能从 GitHub Trending Weekly 筛选到匹配 KEY_WORDS 的项目：{', '.join(keywords)}")
+    repos = apply_topic_context(repos, label, keywords)
     if not args.no_openai:
         repos = enrich_with_openai(repos, label)
 

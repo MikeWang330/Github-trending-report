@@ -38,8 +38,8 @@
 - `OPENAI_MODEL`：默认 `gpt-4.1-mini`
 - `OPENAI_BASE_URL`：默认 `https://api.openai.com`
 - `REPORT_LIMIT`：默认 `7`
-- `KEY_WORDS`：筛选关键词，用英文逗号、中文逗号或换行分隔；默认是 AI 方向
-- `TOPIC_LABEL`：周报标题里的主题名称，可选
+- `KEY_WORDS` 或 `key_words`：筛选关键词，用英文逗号、中文逗号或换行分隔；默认是 AI 方向
+- `TOPIC_LABEL` 或 `topic_label`：周报标题里的主题名称，可选
 
 为了兼容旧配置，也支持：
 
@@ -56,3 +56,5 @@
 - 安全方向：`security, cyber, vulnerability, pentest`
 - 前端方向：`react, vue, frontend, ui, css`
 - 数据方向：`data, database, analytics, warehouse`
+
+如果自定义关键词中同时包含业务词和宽泛 AI 词，例如 `retail, sales, dashboard, ai, agent`，系统会要求项目至少命中一个业务词，避免结果又退回泛 AI 榜单。

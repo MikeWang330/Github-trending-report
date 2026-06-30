@@ -1,4 +1,4 @@
-name: GitHub Trending AI 中文周报
+name: GitHub Trending 自定义领域中文周报
 
 on:
   schedule:
@@ -64,15 +64,15 @@ jobs:
       - name: 生成 GitHub Trending 周报
         env:
           REPORT_LIMIT: ${{ github.event.inputs.limit || vars.REPORT_LIMIT || '7' }}
-          KEY_WORDS: ${{ github.event.inputs.key_words || vars.KEY_WORDS || secrets.KEY_WORDS }}
-          TOPIC_LABEL: ${{ vars.TOPIC_LABEL || secrets.TOPIC_LABEL }}
+          KEY_WORDS: ${{ github.event.inputs.key_words || vars.KEY_WORDS || vars.key_words || secrets.KEY_WORDS || secrets.key_words }}
+          TOPIC_LABEL: ${{ vars.TOPIC_LABEL || vars.topic_label || secrets.TOPIC_LABEL || secrets.topic_label }}
           LOG_LEVEL: INFO
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || secrets.OPENAI_MODEL || 'gpt-4.1-mini' }}
         run: |
           echo "=========================================="
-          echo "🚀 GitHub Trending AI 中文周报"
+          echo "🚀 GitHub Trending 自定义领域中文周报"
           echo "=========================================="
           echo "⏰ 时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
           echo "📦 入选项目数量: $REPORT_LIMIT"
