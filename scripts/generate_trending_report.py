@@ -19,6 +19,36 @@ from time import time
 
 TRENDING_URL = "https://github.com/trending?since=weekly"
 OPENAI_RESPONSES_PATH = "/v1/responses"
+AI_KEYWORDS = (
+    "ai",
+    "artificial intelligence",
+    "llm",
+    "large language model",
+    "machine learning",
+    "machine-learning",
+    "deep learning",
+    "deep-learning",
+    "ml",
+    "gpt",
+    "agent",
+    "agents",
+    "rag",
+    "retrieval augmented",
+    "transformer",
+    "diffusion",
+    "inference",
+    "embedding",
+    "embeddings",
+    "neural",
+    "computer vision",
+    "nlp",
+    "speech",
+    "voice",
+    "model",
+    "models",
+    "mcp",
+    "copilot",
+)
 BEIJING = timezone(timedelta(hours=8))
 THEMES = [
     ("teal-mist", "#0f766e", "linear-gradient(135deg,#d9f7f2 0%,#f8fbff 45%,#e7f1ff 100%)"),
@@ -66,7 +96,7 @@ def extract_int(value: str) -> int:
     return int(match.group(0).replace(",", "")) if match else 0
 
 
-def parse_trending(page: str, limit: int) -> list[Repo]:
+def parse_trending(page: str) -> list[Repo]:
     articles = re.findall(r"<article\b.*?</article>", page, flags=re.S)
     repos: list[Repo] = []
     for article in articles:
@@ -106,7 +136,33 @@ def parse_trending(page: str, limit: int) -> list[Repo]:
         )
 
     repos.sort(key=lambda item: item.weekly_stars, reverse=True)
-    return repos[:limit]
+    return repos
+
+
+def filter_ai_repos(repos: list[Repo], limit: int) -> list[Repo]:
+    matched = [repo for repo in repos if ai_relevance_score(repo) > 0]
+    matched.sort(key=lambda item: item.weekly_stars, reverse=True)
+    return matched[:limit]
+
+
+def ai_relevance_score(repo: Repo) -> int:
+    text = f"{repo.name} {repo.author} {repo.description} {repo.language}".lower()
+    tokens = set(re.findall(r"[a-z0-9]+", text))
+    score = 0
+    for keyword in AI_KEYWORDS:
+        if " " in keyword or "-" in keyword:
+            if keyword in text:
+                score += 3
+        elif keyword in tokens:
+            score += 2
+
+    # Very short tokens like "ai" and "ml" are noisy, so require an extra signal
+    # unless the project name itself clearly uses the term.
+    repo_name = repo.name.lower()
+    short_only = bool(tokens.intersection({"ai", "ml"})) and score <= 2
+    if short_only and not re.search(r"(^|[-_])(?:ai|ml)([-_]|$)", repo_name):
+        return 0
+    return score
 
 
 def enrich_with_openai(repos: list[Repo]) -> list[Repo]:
@@ -131,11 +187,11 @@ def enrich_with_openai(repos: list[Repo]) -> list[Repo]:
         for repo in repos
     ]
     prompt = (
-        "请把下面 GitHub Trending 项目改写成面向中文读者的周报解读。"
+        "请把下面 GitHub Trending Weekly 中筛选出的 AI 相关项目改写成面向中文读者的周报解读。"
         "要求：不要夸张营销，不要技术黑话堆砌；让产品、运营、研发都能看懂。"
         "每个项目输出 JSON 字段：name, what, features, usage。"
         "what 用一句话说明它是什么、解决什么问题；features 是 2-3 个短句；"
-        "usage 用通俗业务语言说明可以怎么用。只返回 JSON 数组。\n\n"
+        "usage 写成“适用场景”，说明适合哪类用户、在什么业务场景下使用。只返回 JSON 数组。\n\n"
         f"{json.dumps(items, ensure_ascii=False)}"
     )
     payload = {
@@ -213,17 +269,17 @@ def explain_project(name: str, description: str, language: str) -> tuple[str, li
     ]
     for keys, category, summary, features, usage in rules:
         if any(key in text for key in keys):
-            return f"{name} 是一个偏{category}的开源项目，{summary}", features, usage
+            return f"{name} 是一个偏向{category}的开源项目，{summary}", features, usage
 
     features = [
-        "提供一组可直接复用的开源能力",
+        "围绕 AI 应用开发提供可复用能力",
         "适合开发者根据自己的业务继续改造",
-        "可以作为同类项目选型或学习参考",
+        "可以作为同类 AI 项目选型或学习参考",
     ]
-    usage = "适合开发者或技术团队先用它快速验证想法，再按自己的业务需求做定制。"
+    usage = "适合正在探索 AI 应用、模型工具或智能自动化的开发者和技术团队，用来快速验证想法并做业务定制。"
     if language and language != "未标注":
         features[0] = f"主要使用 {language} 构建，方便相同技术栈团队上手"
-    return f"{name} 是一个近期热度较高的开源项目，可以帮助开发者更快搭建或改进相关工具。", features, usage
+    return f"{name} 是一个近期热度较高的 AI 相关开源项目，可以帮助开发者更快搭建或改进智能化工具。", features, usage
 
 
 def choose_theme(output_dir: Path) -> tuple[str, str, str]:
@@ -256,7 +312,7 @@ def render_html(repos: list[Repo], generated_at: str, theme: tuple[str, str, str
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GitHub Trending 中文周报</title>
+  <title>GitHub Trending AI 中文周报</title>
   <style>
     :root {{ --ink:#172033; --muted:#647084; --line:rgba(23,32,51,.12); --panel:rgba(255,255,255,.9); --accent:{accent}; --soft:color-mix(in srgb, {accent} 12%, transparent); }}
     * {{ box-sizing:border-box; }}
@@ -291,15 +347,15 @@ def render_html(repos: list[Repo], generated_at: str, theme: tuple[str, str, str
   <main class="page">
     <header>
       <div>
-        <h1>GitHub Trending 中文周报</h1>
-        <p class="meta">数据抓取时间：{html.escape(generated_at)}<br>范围：GitHub Trending Weekly，不限定领域，默认精选 7 个项目。</p>
+        <h1>GitHub Trending AI 中文周报</h1>
+        <p class="meta">数据抓取时间：{html.escape(generated_at)}<br>范围：GitHub Trending Weekly 中的 AI 相关项目，按本周新增 Star 降序排列。</p>
       </div>
-      <div class="count"><strong>{len(repos)}</strong><span class="meta">个热门项目</span></div>
+      <div class="count"><strong>{len(repos)}</strong><span class="meta">个 AI 热门项目</span></div>
     </header>
     <section class="grid">
 {cards}
     </section>
-    <footer>数据来源：<a href="{TRENDING_URL}">GitHub Trending Weekly</a>。中文解读优先由 OpenAI API 生成；未配置或调用失败时使用本地规则兜底，具体能力以项目仓库为准。</footer>
+    <footer>数据来源：<a href="{TRENDING_URL}">GitHub Trending Weekly</a>。筛选依据包含项目名、作者、简介、语言和 AI 相关关键词；中文解读优先由 OpenAI API 生成，具体能力以项目仓库为准。</footer>
   </main>
 </body>
 </html>
@@ -308,12 +364,12 @@ def render_html(repos: list[Repo], generated_at: str, theme: tuple[str, str, str
 
 def render_card(repo: Repo) -> str:
     features = "".join(f"<li>{html.escape(item)}</li>" for item in repo.features)
-    return f"""      <article class="card"><div class="inner"><div class="top"><div><a class="name" href="{html.escape(repo.url)}">{html.escape(repo.name)}</a><div class="author">{html.escape(repo.author)}</div></div><div class="stats"><span class="pill">{html.escape(repo.language)}</span><span class="pill gray">{html.escape(repo.stars)} Stars</span><span class="pill">+{repo.weekly_stars:,}</span></div></div><p>{html.escape(repo.what)}</p><div class="label">核心功能</div><ul>{features}</ul><p><strong>可以怎么用：</strong>{html.escape(repo.usage)}</p></div></article>"""
+    return f"""      <article class="card"><div class="inner"><div class="top"><div><a class="name" href="{html.escape(repo.url)}">{html.escape(repo.name)}</a><div class="author">{html.escape(repo.author)}</div></div><div class="stats"><span class="pill">{html.escape(repo.language)}</span><span class="pill gray">{html.escape(repo.stars)} Stars</span><span class="pill">+{repo.weekly_stars:,}</span></div></div><p>{html.escape(repo.what)}</p><div class="label">核心功能</div><ul>{features}</ul><p><strong>适用场景：</strong>{html.escape(repo.usage)}</p></div></article>"""
 
 
 def build_feishu_text(summary: dict, public_url: str | None) -> str:
     lines = [
-        "GitHub Trending 中文周报",
+        "GitHub Trending AI 中文周报",
         f"抓取时间：{summary['generated_at']}",
         f"项目数量：{len(summary['repos'])} 个",
     ]
@@ -326,7 +382,7 @@ def build_feishu_text(summary: dict, public_url: str | None) -> str:
                 f"{index}. {repo['name']}（+{repo['weekly_stars']:,}）",
                 repo["url"],
                 f"是什么：{repo['what']}",
-                f"可以怎么用：{repo['usage']}",
+                f"适用场景：{repo['usage']}",
                 "",
             ]
         )
@@ -374,9 +430,10 @@ def generate(args: argparse.Namespace) -> None:
     generated_at = datetime.now(BEIJING).strftime("%Y-%m-%d %H:%M:%S +08:00")
     today = datetime.now(BEIJING).strftime("%Y-%m-%d")
     page = fetch(TRENDING_URL)
-    repos = parse_trending(page, args.limit)
+    all_repos = parse_trending(page)
+    repos = filter_ai_repos(all_repos, args.limit)
     if not repos:
-        raise RuntimeError("未能从 GitHub Trending 解析到项目。")
+        raise RuntimeError("未能从 GitHub Trending Weekly 筛选到 AI 相关项目。")
     if not args.no_openai:
         repos = enrich_with_openai(repos)
 

@@ -1,4 +1,4 @@
-name: GitHub Trending 中文周报
+name: GitHub Trending AI 中文周报
 
 on:
   schedule:
@@ -65,10 +65,10 @@ jobs:
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || secrets.OPENAI_MODEL || 'gpt-4.1-mini' }}
         run: |
           echo "=========================================="
-          echo "🚀 GitHub Trending 中文周报"
+          echo "🚀 GitHub Trending AI 中文周报"
           echo "=========================================="
           echo "⏰ 时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
-          echo "📦 入选项目数量: $REPORT_LIMIT"
+          echo "📦 AI 入选项目数量: $REPORT_LIMIT"
           echo "📡 数据来源: https://github.com/trending?since=weekly"
           echo "🤖 OpenAI: $([ -n "$OPENAI_API_KEY" ] && echo '✅ 已配置' || echo '⚪ 未配置，将使用本地兜底文案')"
           echo "🧠 模型: ${OPENAI_MODEL:-gpt-4.1-mini}"

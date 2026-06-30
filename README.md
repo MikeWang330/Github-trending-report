@@ -1,4 +1,4 @@
-# GitHub Trending 中文周报
+# GitHub Trending AI 中文周报
 
 这个项目采用和 `daily_stock_analysis` 类似的运行形态：
 
@@ -7,7 +7,13 @@
 - `reports/`、`logs/` 作为运行产物目录
 - `.github/workflows/weekly-trending.yml` 负责云端定时运行
 - GitHub Pages 发布公开网页
-- 飞书机器人发送完整榜单和公开页面链接
+- 飞书机器人发送 AI 项目榜单和公开页面链接
+
+周报会从 GitHub Trending Weekly 中筛选 AI 相关项目，提取项目名、作者、Star 数、本周新增 Star、主要语言和仓库 URL，并生成中文解读：
+
+- 一句话概述
+- 核心功能
+- 适用场景
 
 ## GitHub Actions
 
