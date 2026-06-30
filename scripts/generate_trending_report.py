@@ -9,17 +9,20 @@ import os
 import re
 import sys
 import urllib.error
-import urllib.parse
 import urllib.request
-from dataclasses import dataclass, asdict
-from datetime import datetime, timezone, timedelta
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import time
 
 
 TRENDING_URL = "https://github.com/trending?since=weekly"
 OPENAI_RESPONSES_PATH = "/v1/responses"
-DEFAULT_KEYWORDS = (
+BEIJING = timezone(timedelta(hours=8))
+DEFAULT_LIMIT = 8
+DEFAULT_HISTORY_WINDOW = 4
+
+AI_KEYWORDS = (
     "ai",
     "artificial intelligence",
     "llm",
@@ -49,27 +52,13 @@ DEFAULT_KEYWORDS = (
     "mcp",
     "copilot",
 )
-DEFAULT_TOPIC_LABEL = "AI"
-CUSTOM_BROAD_KEYWORDS = {"ai", "agent", "agents", "llm", "gpt", "automation"}
-KEYWORD_ALIASES = {
-    "饮料": ("beverage", "drink"),
-    "快消": ("consumer", "retail", "fmcg"),
-    "消费品": ("consumer", "retail"),
-    "商业分析": ("analytics", "business intelligence", "dashboard"),
-    "经营分析": ("analytics", "dashboard", "forecast"),
-    "渠道": ("retail", "sales", "ecommerce"),
-    "品牌": ("brand", "marketing"),
-    "销售": ("sales", "crm"),
-    "定价": ("pricing",),
-    "预测": ("forecast",),
-}
-BEIJING = timezone(timedelta(hours=8))
+
 THEMES = [
     ("teal-mist", "#0f766e", "linear-gradient(135deg,#d9f7f2 0%,#f8fbff 45%,#e7f1ff 100%)"),
-    ("violet-sage", "#7c3aed", "linear-gradient(135deg,#f1eafe 0%,#f8fbff 42%,#e7f5ef 100%)"),
     ("blue-coral", "#2563eb", "linear-gradient(135deg,#e8f1ff 0%,#fbfdff 44%,#ffece6 100%)"),
     ("forest-gold", "#047857", "linear-gradient(135deg,#e8f7ef 0%,#fbfbf5 48%,#fff1cc 100%)"),
     ("slate-rose", "#be123c", "linear-gradient(135deg,#eef2f7 0%,#fff8fb 44%,#f6eefc 100%)"),
+    ("violet-sage", "#7c3aed", "linear-gradient(135deg,#f1eafe 0%,#f8fbff 42%,#e7f5ef 100%)"),
 ]
 
 
@@ -85,6 +74,10 @@ class Repo:
     what: str
     features: list[str]
     usage: str
+
+    @property
+    def key(self) -> str:
+        return f"{self.author}/{self.name}".lower()
 
 
 def fetch(url: str) -> str:
@@ -126,10 +119,14 @@ def parse_trending(page: str) -> list[Repo]:
         author, name = parts[0], parts[1]
         desc_match = re.search(r'<p[^>]*class="[^"]*col-9[^"]*"[^>]*>(.*?)</p>', article, flags=re.S)
         lang_match = re.search(r'<span itemprop="programmingLanguage">([^<]+)</span>', article)
-        star_links = re.findall(r'<a[^>]+href="/%s/%s/stargazers"[^>]*>(.*?)</a>' % (re.escape(author), re.escape(name)), article, flags=re.S)
+        star_links = re.findall(
+            r'<a[^>]+href="/%s/%s/stargazers"[^>]*>(.*?)</a>' % (re.escape(author), re.escape(name)),
+            article,
+            flags=re.S,
+        )
         weekly_match = re.search(r"([\d,]+)\s+stars?\s+this\s+week", strip_tags(article), flags=re.I)
 
-        description = strip_tags(desc_match.group(1)) if desc_match else "暂无公开简介。"
+        description = strip_tags(desc_match.group(1)) if desc_match else "暂无公开简介"
         language = strip_tags(lang_match.group(1)) if lang_match else "未标注"
         stars = strip_tags(star_links[0]) if star_links else "0"
         weekly_stars = extract_int(weekly_match.group(1) if weekly_match else "")
@@ -153,62 +150,76 @@ def parse_trending(page: str) -> list[Repo]:
     return repos
 
 
-def parse_keywords(value: str | None) -> tuple[str, ...]:
-    if not value:
-        return DEFAULT_KEYWORDS
-    raw_keywords = [item.strip().lower() for item in re.split(r"[,，\n;；]+", value) if item.strip()]
-    keywords: list[str] = []
-    for keyword in raw_keywords:
-        keywords.append(keyword)
-        keywords.extend(KEYWORD_ALIASES.get(keyword, ()))
-    return tuple(dict.fromkeys(keywords)) or DEFAULT_KEYWORDS
-
-
-def topic_label(keywords: tuple[str, ...]) -> str:
-    configured = os.getenv("TOPIC_LABEL") or os.getenv("topic_label") or os.getenv("REPORT_TOPIC") or os.getenv("report_topic")
-    if configured:
-        return configured.strip()
-    if keywords == DEFAULT_KEYWORDS:
-        return DEFAULT_TOPIC_LABEL
-    return " / ".join(keyword.upper() if len(keyword) <= 4 else keyword.title() for keyword in keywords[:3])
-
-
-def filter_repos_by_keywords(repos: list[Repo], keywords: tuple[str, ...], limit: int) -> list[Repo]:
-    matched = [repo for repo in repos if keyword_relevance_score(repo, keywords) > 0]
-    matched.sort(key=lambda item: item.weekly_stars, reverse=True)
-    return matched[:limit]
-
-
-def keyword_relevance_score(repo: Repo, keywords: tuple[str, ...]) -> int:
+def ai_relevance_score(repo: Repo) -> int:
     text = f"{repo.name} {repo.author} {repo.description} {repo.language}".lower()
     tokens = set(re.findall(r"[a-z0-9]+", text))
     score = 0
-    focused_score = 0
-    has_focused_keywords = keywords != DEFAULT_KEYWORDS and any(keyword not in CUSTOM_BROAD_KEYWORDS for keyword in keywords)
-    for keyword in keywords:
-        keyword_score = 0
+    for keyword in AI_KEYWORDS:
         if " " in keyword or "-" in keyword:
             if keyword in text:
-                keyword_score = 3
+                score += 3
         elif keyword in tokens:
-            keyword_score = 2
-        score += keyword_score
-        if keyword not in CUSTOM_BROAD_KEYWORDS:
-            focused_score += keyword_score
+            score += 2
 
-    if has_focused_keywords and focused_score == 0:
-        return 0
-
-    # Very short tokens like "ai" and "ml" are noisy, so require an extra signal
-    # unless the project name itself clearly uses the term.
     repo_name = repo.name.lower()
     short_only = bool(tokens.intersection({"ai", "ml"})) and score <= 2
-    if keywords == DEFAULT_KEYWORDS and short_only and not re.search(r"(^|[-_])(?:ai|ml)([-_]|$)", repo_name):
+    if short_only and not re.search(r"(^|[-_])(?:ai|ml)([-_]|$)", repo_name):
         return 0
     return score
 
 
-def enrich_with_openai(repos: list[Repo], label: str) -> list[Repo]:
+def filter_ai_repos(repos: list[Repo]) -> list[Repo]:
+    matched = [repo for repo in repos if ai_relevance_score(repo) > 0]
+    matched.sort(key=lambda item: item.weekly_stars, reverse=True)
+    return matched
+
+
+def load_history(path: Path) -> dict:
+    if not path.exists():
+        return {"recent_reports": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"recent_reports": []}
+    if not isinstance(data, dict) or not isinstance(data.get("recent_reports"), list):
+        return {"recent_reports": []}
+    return data
+
+
+def recent_history_keys(history: dict, window: int) -> set[str]:
+    reports = history.get("recent_reports", [])[-window:]
+    keys: set[str] = set()
+    for report in reports:
+        repos = report.get("repos", []) if isinstance(report, dict) else []
+        for repo in repos:
+            keys.add(str(repo).lower())
+    return keys
+
+
+def apply_history_dedupe(repos: list[Repo], history: dict, window: int) -> tuple[list[Repo], int]:
+    seen = recent_history_keys(history, window)
+    filtered = [repo for repo in repos if repo.key not in seen]
+    return filtered, len(repos) - len(filtered)
+
+
+def save_history(path: Path, history: dict, repos: list[Repo], generated_at: str, window: int, theme_name: str) -> None:
+    reports = history.get("recent_reports", [])
+    today = datetime.now(BEIJING).strftime("%Y-%m-%d")
+    reports = [report for report in reports if isinstance(report, dict) and report.get("date") != today]
+    reports.append(
+        {
+            "date": today,
+            "generated_at": generated_at,
+            "theme": theme_name,
+            "repos": [repo.key for repo in repos],
+        }
+    )
+    history["recent_reports"] = reports[-max(window, 1) :]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def enrich_with_openai(repos: list[Repo]) -> list[Repo]:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         print("未配置 OPENAI_API_KEY，使用本地规则生成中文解读。")
@@ -230,16 +241,16 @@ def enrich_with_openai(repos: list[Repo], label: str) -> list[Repo]:
         for repo in repos
     ]
     prompt = (
-        f"请把下面 GitHub Trending Weekly 中筛选出的“{label}”相关项目改写成面向中文读者的周报解读。"
-        "要求：不要夸张营销，不要技术黑话堆砌；让产品、运营、研发都能看懂。"
+        "请把下面 GitHub Trending Weekly 中筛选出的 AI 相关项目改写成面向中文读者的周报解读。"
+        "要求：语言通俗，不要堆技术黑话；让产品、运营、研发和业务同学都能看懂。"
         "每个项目输出 JSON 字段：name, what, features, usage。"
         "what 用一句话说明它是什么、解决什么问题；features 是 2-3 个短句；"
-        "usage 写成“适用场景”，说明适合哪类用户、在什么业务场景下使用。只返回 JSON 数组。\n\n"
+        "usage 写成适用场景，说明适合哪类用户、在什么业务场景下使用。只返回 JSON 数组。\n\n"
         f"{json.dumps(items, ensure_ascii=False)}"
     )
     payload = {
         "model": model,
-        "instructions": "你是一个擅长把开源项目讲清楚的中文技术编辑。",
+        "instructions": "你是一位擅长把开源 AI 项目讲清楚的中文技术编辑。",
         "input": prompt,
         "temperature": 0.55,
     }
@@ -277,63 +288,6 @@ def enrich_with_openai(repos: list[Repo], label: str) -> list[Repo]:
     return repos
 
 
-def apply_topic_context(repos: list[Repo], label: str, keywords: tuple[str, ...]) -> list[Repo]:
-    if keywords == DEFAULT_KEYWORDS:
-        return repos
-    for repo in repos:
-        repo.what, repo.features, repo.usage = explain_project_for_topic(repo, label, keywords)
-    return repos
-
-
-def explain_project_for_topic(repo: Repo, label: str, keywords: tuple[str, ...]) -> tuple[str, list[str], str]:
-    text = " ".join(keywords).lower()
-    clean_desc = repo.description.strip().rstrip(".。")
-    summary = plain_summary(clean_desc) if clean_desc and clean_desc != "暂无公开简介" else "提供可复用的开源能力"
-
-    if any(word in text for word in ("consumer", "retail", "beverage", "food", "ecommerce", "brand", "marketing", "sales", "pricing", "crm")):
-        return (
-            f"{repo.name} 是一个可用于{label}方向的开源项目，主要价值在于{summary}。",
-            [
-                "帮助团队观察消费者、渠道、品牌或销售相关数据",
-                "可作为商业分析、增长分析或运营看板的技术参考",
-                "适合和内部数据源、自动化流程或 AI 分析能力结合",
-            ],
-            "适合商业分析、渠道运营、品牌增长和数据产品团队，用来做趋势跟踪、经营分析、销售预测或自动化报告。",
-        )
-
-    if any(word in text for word in ("analytics", "dashboard", "data", "forecast", "bi", "warehouse", "pipeline")):
-        return (
-            f"{repo.name} 是一个偏数据分析与看板建设的开源项目，主要用于{summary}。",
-            [
-                "支持数据采集、整理、展示或分析链路中的某一环节",
-                "可帮助团队更快搭建可视化报表或分析工作流",
-                "适合沉淀为内部数据产品、自动化脚本或运营监控工具",
-            ],
-            "适合数据分析师、BI 团队、经营分析和业务中台，用来提升日常取数、看板、预测和复盘效率。",
-        )
-
-    if any(word in text for word in ("agent", "automation", "workflow", "llm", "ai", "rag", "gpt")):
-        return (
-            f"{repo.name} 是一个与{label}相关的智能化工具项目，主要用于{summary}。",
-            [
-                "把模型、工具或业务动作串成可执行流程",
-                "减少重复信息整理、生成和通知工作",
-                "适合改造成内部助手或自动化分析工具",
-            ],
-            "适合研发、运营、商业分析和数据团队，用来把重复分析、资料整理和报告生成交给 AI 辅助完成。",
-        )
-
-    return (
-        f"{repo.name} 是一个与{label}相关的开源项目，主要用于{summary}。",
-        [
-            f"围绕 {label} 方向提供可复用能力",
-            "适合开发者根据业务需求进行二次改造",
-            "可作为同类项目选型、技术调研或原型验证参考",
-        ],
-        f"适合关注 {label} 方向的业务、产品、数据和研发团队，用来做技术调研、效率工具建设或内部系统原型。",
-    )
-
-
 def extract_response_text(result: dict) -> str:
     if result.get("output_text"):
         return str(result["output_text"])
@@ -360,53 +314,32 @@ def explain_project(name: str, description: str, language: str) -> tuple[str, li
     name_text = name.lower()
     rules = [
         (
-            ("video production", "video", "studio", "pipeline"),
-            "AI 视频生产系统",
-            "把脚本、素材处理、剪辑和生成流程整合成一套自动化视频制作工作台。",
-            ["提供多条视频制作流水线", "把不同制作工具封装成可调用能力", "让 AI 编程助手参与内容生产流程"],
+            ("video", "studio", "pipeline", "generate video"),
+            "AI 视频生产工具",
+            "把脚本、素材处理、剪辑和生成流程整合成自动化视频制作工作台。",
+            ["提供视频制作或素材处理流程", "把多个制作步骤封装成可调用能力", "适合接入内容生产自动化链路"],
             "适合内容团队、短视频运营和开发者，用来搭建自动化视频生成、批量剪辑或创意生产工具。",
         ),
         (
-            ("clone", "website", "web site", "webpage"),
-            "AI 网页复刻模板",
-            "用 AI 编码 Agent 根据参考网站快速生成相似页面或原型。",
-            ["把网页复刻流程模板化", "适合快速生成前端页面代码", "可作为竞品分析和原型验证起点"],
-            "适合产品经理、前端开发和独立开发者，用来快速做落地页、竞品风格参考和演示原型。",
+            ("codebase", "code intelligence", "mcp", "repository"),
+            "代码库理解工具",
+            "帮助 AI 助手理解项目结构、代码关系和长期上下文，减少重复解释成本。",
+            ["索引代码结构和项目知识", "给 AI 编程工具提供上下文", "提升大项目里的问答、排查和重构效率"],
+            "适合研发团队、架构师和 AI 编程重度用户，用来让助手更快理解老项目、排查代码和辅助重构。",
         ),
         (
-            ("codebase", "code intelligence", "mcp"),
-            "代码库记忆工具",
-            "把代码库索引成可查询的知识图谱，让 AI 助手更懂项目上下文。",
-            ["快速索引仓库结构和代码关系", "通过 MCP 给 AI 编程工具提供上下文", "减少大项目里反复解释代码背景的成本"],
-            "适合研发团队、架构师和 AI 编程重度用户，用来让助手快速理解老项目、排查代码和辅助重构。",
+            ("agent", "workflow", "automation", "tool use"),
+            "AI Agent 工具",
+            "把模型、工具和业务动作串成可执行流程，让 AI 能完成更具体的任务。",
+            ["支持工具调用或任务编排", "减少重复信息整理和人工操作", "适合改造成内部助手或自动化工具"],
+            "适合研发、运营、商业分析和数据团队，用来把资料整理、结果生成和通知推送交给 AI 辅助完成。",
         ),
         (
-            ("twitter", "reddit", "youtube", "bilibili", "xiaohongshu", "entire internet", "search"),
-            "Agent 信息检索工具",
-            "让 AI Agent 能读取和搜索多个公开平台的信息，补足实时资料获取能力。",
-            ["聚合多个内容平台的信息读取", "用统一命令完成搜索和抓取", "避免为每个平台单独接入 API"],
-            "适合研究、运营、投研和舆情团队，用来让 AI 自动收集社媒、视频平台和代码社区的公开线索。",
-        ),
-        (
-            ("design system", "visual identity", "coding agents", "design.md"),
-            "AI 设计规范文档格式",
-            "用结构化文档描述品牌和界面规范，让 AI 编码工具生成更一致的页面。",
-            ["沉淀颜色、字体、组件和视觉规则", "给编码 Agent 提供稳定设计上下文", "减少 AI 生成页面时的风格漂移"],
-            "适合产品、设计和前端团队，在用 AI 生成页面或组件时保持统一品牌风格。",
-        ),
-        (
-            ("memory", "long-term memory", "knowledge graph", "persistent"),
-            "AI 长期记忆平台",
-            "为 AI Agent 提供可自托管的长期记忆和知识图谱能力。",
-            ["把文档和交互沉淀为可检索知识", "支持跨会话保留上下文", "让 Agent 在复杂任务里减少遗忘"],
-            "适合做企业知识助手、客服 Agent、研发助手和长期任务型 AI 应用的团队。",
-        ),
-        (
-            ("stock", "market", "news", "decision", "analysis"),
-            "AI 股票分析系统",
-            "把行情、新闻和大模型分析结合起来，生成自动化市场观察和决策参考。",
-            ["整合多源行情和实时新闻", "用 LLM 生成分析报告", "支持定时运行和自动推送"],
-            "适合个人投资者、研究员和量化/投研团队，用来做市场复盘、候选标的跟踪和信息整理。",
+            ("memory", "knowledge graph", "persistent", "context"),
+            "AI 记忆与知识管理工具",
+            "为 AI 应用提供长期记忆、知识沉淀或上下文检索能力。",
+            ["沉淀文档、对话或项目知识", "支持跨会话保留上下文", "让 AI 在复杂任务中减少遗忘"],
+            "适合企业知识助手、客服 Agent、研发助手和长期任务型 AI 应用团队。",
         ),
         (
             ("voice", "audio", "speech"),
@@ -416,16 +349,23 @@ def explain_project(name: str, description: str, language: str) -> tuple[str, li
             "适合语音客服、会议记录、口语练习和音频内容处理场景。",
         ),
         (
-            ("security", "cyber", "vulnerability"),
-            "AI 安全分析工具",
-            "帮助团队更系统地把 AI 用到安全检查、日志分析和风险处置中。",
-            ["提供安全分析流程模板", "辅助整理风险线索和处置建议", "适合接入安全团队日常工作流"],
-            "适合安全工程师、运维和研发团队，用来辅助排查风险、整理日志和生成处置清单。",
+            ("image", "diffusion", "vision", "ocr", "visual"),
+            "AI 视觉工具",
+            "围绕图像生成、视觉理解或多模态处理提供开源能力。",
+            ["支持图像或视觉数据处理", "可接入内容生成和识别流程", "便于做视觉 AI 原型验证"],
+            "适合设计、内容、研发和数据团队，用来做图片生成、视觉识别、多模态分析或内部工具。",
+        ),
+        (
+            ("rag", "retrieval", "search", "embedding", "vector"),
+            "AI 检索增强工具",
+            "把搜索、向量检索和大模型回答结合起来，让 AI 能利用外部资料生成更可靠结果。",
+            ["支持资料检索和上下文召回", "帮助大模型减少凭空回答", "适合接入企业文档或知识库"],
+            "适合知识库问答、投研资料整理、客服助手和内部文档检索场景。",
         ),
     ]
     for keys, category, summary, features, usage in rules:
         if any(key in text or key in name_text for key in keys):
-            return f"{name} 是一款{readable_category(category)}，{summary}", features, usage
+            return f"{name} 是一个{category}，主要用于{summary}", features, usage
 
     features = [
         "围绕 AI 应用开发提供可复用能力",
@@ -441,18 +381,11 @@ def explain_project(name: str, description: str, language: str) -> tuple[str, li
     return f"{name} 是一个近期热度较高的 AI 相关开源项目，可以帮助开发者更快搭建或改进智能化工具。", features, usage
 
 
-def readable_category(category: str) -> str:
-    if re.match(r"^[A-Za-z]", category):
-        return f" {category}"
-    return category
-
-
 def plain_summary(description: str) -> str:
     summary = re.sub(r"\s+", " ", description).strip()
     replacements = {
         "World's first open-source": "开源",
         "open-source": "开源",
-        "AI": "AI",
         "agentic": "智能体式",
     }
     for source, target in replacements.items():
@@ -462,38 +395,29 @@ def plain_summary(description: str) -> str:
     return summary
 
 
-def choose_theme(output_dir: Path) -> tuple[str, str, str]:
-    state_path = output_dir / "theme-history.json"
-    recent: list[str] = []
-    if state_path.exists():
-        try:
-            recent = [item["theme"] for item in json.loads(state_path.read_text(encoding="utf-8")).get("recentThemes", [])[-3:]]
-        except (json.JSONDecodeError, KeyError, TypeError):
-            recent = []
-
-    theme = next((item for item in THEMES if item[0] not in recent), THEMES[0])
-    today = datetime.now(BEIJING).strftime("%Y-%m-%d")
-    history = [{"date": today, "theme": theme[0]}]
-    if state_path.exists():
-        try:
-            old = json.loads(state_path.read_text(encoding="utf-8")).get("recentThemes", [])
-            history = (old + history)[-3:]
-        except json.JSONDecodeError:
-            pass
-    state_path.write_text(json.dumps({"recentThemes": history}, ensure_ascii=False, indent=2), encoding="utf-8")
-    return theme
+def choose_theme(history: dict) -> tuple[str, str, str]:
+    used = []
+    for report in history.get("recent_reports", [])[-3:]:
+        if isinstance(report, dict) and report.get("theme"):
+            used.append(str(report["theme"]))
+    return next((theme for theme in THEMES if theme[0] not in used), THEMES[0])
 
 
-def render_html(repos: list[Repo], generated_at: str, theme: tuple[str, str, str], label: str, keywords: tuple[str, ...]) -> str:
+def render_html(repos: list[Repo], generated_at: str, theme: tuple[str, str, str], skipped_count: int, history_window: int) -> str:
     _, accent, background = theme
     cards = "\n".join(render_card(repo) for repo in repos)
-    keyword_text = "、".join(keywords)
+    empty = ""
+    if not repos:
+        empty = '<div class="empty">最近几期已覆盖了本周 AI Trending 项目，本期没有新的非重复项目。</div>'
+    dedupe_note = f"已避开最近 {history_window} 次周报出现过的项目"
+    if skipped_count:
+        dedupe_note += f"，本次去重 {skipped_count} 个"
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GitHub Trending {html.escape(label)} 中文周报</title>
+  <title>GitHub Trending AI 中文周报</title>
   <style>
     :root {{ --ink:#172033; --muted:#647084; --line:rgba(23,32,51,.12); --panel:rgba(255,255,255,.9); --accent:{accent}; --soft:color-mix(in srgb, {accent} 12%, transparent); }}
     * {{ box-sizing:border-box; }}
@@ -519,6 +443,7 @@ def render_html(repos: list[Repo], generated_at: str, theme: tuple[str, str, str
     p {{ margin:14px 0 0; color:#2d374b; line-height:1.75; font-size:15px; }}
     .label {{ margin-top:15px; color:#243047; font-size:14px; font-weight:740; }}
     ul {{ margin:7px 0 0; padding-left:20px; color:#354157; line-height:1.7; font-size:14px; }}
+    .empty {{ padding:28px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--muted); }}
     footer {{ margin-top:24px; padding-top:18px; border-top:1px solid var(--line); }}
     footer a {{ color:var(--accent); }}
     @media (max-width:720px){{ header,.top{{display:block}}.count{{margin-top:16px}}.stats{{justify-content:flex-start;margin-top:12px}}.inner{{padding:18px}}.page{{width:min(100% - 22px,1120px);padding-top:28px}} }}
@@ -528,15 +453,16 @@ def render_html(repos: list[Repo], generated_at: str, theme: tuple[str, str, str
   <main class="page">
     <header>
       <div>
-        <h1>GitHub Trending {html.escape(label)} 中文周报</h1>
-        <p class="meta">数据抓取时间：{html.escape(generated_at)}<br>范围：GitHub Trending Weekly 中匹配关键词“{html.escape(keyword_text)}”的项目，按本周新增 Star 降序排列。</p>
+        <h1>GitHub Trending AI 中文周报</h1>
+        <p class="meta">数据抓取时间：{html.escape(generated_at)}<br>范围：GitHub Trending Weekly 中的 AI 相关项目，按本周新增 Star 降序排列。{html.escape(dedupe_note)}。</p>
       </div>
-      <div class="count"><strong>{len(repos)}</strong><span class="meta">个相关热门项目</span></div>
+      <div class="count"><strong>{len(repos)}</strong><span class="meta">个 AI 热门项目</span></div>
     </header>
     <section class="grid">
+{empty}
 {cards}
     </section>
-    <footer>数据来源：<a href="{TRENDING_URL}">GitHub Trending Weekly</a>。筛选依据包含项目名、作者、简介、语言和自定义 KEY_WORDS；中文解读优先由 OpenAI API 生成，具体能力以项目仓库为准。</footer>
+    <footer>数据来源：<a href="{TRENDING_URL}">GitHub Trending Weekly</a>。筛选依据包含项目名、作者、简介和主要语言；中文解读优先由 OpenAI API 生成，具体能力以项目仓库为准。</footer>
   </main>
 </body>
 </html>
@@ -549,13 +475,11 @@ def render_card(repo: Repo) -> str:
 
 
 def build_feishu_text(summary: dict, public_url: str | None) -> str:
-    label = summary.get("topic_label", DEFAULT_TOPIC_LABEL)
-    keywords = summary.get("keywords") or list(DEFAULT_KEYWORDS)
     lines = [
-        f"GitHub Trending {label} 中文周报",
+        "GitHub Trending AI 中文周报",
         f"抓取时间：{summary['generated_at']}",
         f"项目数量：{len(summary['repos'])} 个",
-        f"筛选关键词：{'、'.join(keywords)}",
+        f"跨周去重：避开最近 {summary.get('history_window', DEFAULT_HISTORY_WINDOW)} 次周报，跳过 {summary.get('skipped_by_history', 0)} 个旧项目",
     ]
     if public_url:
         lines.append(f"公开页面：{public_url}")
@@ -617,20 +541,24 @@ def generate(args: argparse.Namespace) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     generated_at = datetime.now(BEIJING).strftime("%Y-%m-%d %H:%M:%S +08:00")
     today = datetime.now(BEIJING).strftime("%Y-%m-%d")
+
+    history_path = Path(args.history_file)
+    history = load_history(history_path)
+
     page = fetch(TRENDING_URL)
     all_repos = parse_trending(page)
-    keywords = parse_keywords(args.key_words or os.getenv("KEY_WORDS") or os.getenv("key_words"))
-    label = topic_label(keywords)
-    repos = filter_repos_by_keywords(all_repos, keywords, args.limit)
-    if not repos:
-        raise RuntimeError(f"未能从 GitHub Trending Weekly 筛选到匹配 KEY_WORDS 的项目：{', '.join(keywords)}")
-    repos = apply_topic_context(repos, label, keywords)
-    if not args.no_openai:
-        repos = enrich_with_openai(repos, label)
+    ai_repos = filter_ai_repos(all_repos)
+    if not ai_repos:
+        raise RuntimeError("未能从 GitHub Trending Weekly 筛选到 AI 相关项目。")
 
-    theme = choose_theme(output_dir)
-    html_text = render_html(repos, generated_at, theme, label, keywords)
-    html_path = output_dir / f"github-trending-weekly-{today}.html"
+    deduped_repos, skipped_count = apply_history_dedupe(ai_repos, history, args.history_window)
+    repos = deduped_repos[: args.limit]
+    if not args.no_openai and repos:
+        repos = enrich_with_openai(repos)
+
+    theme = choose_theme(history)
+    html_text = render_html(repos, generated_at, theme, skipped_count, args.history_window)
+    html_path = output_dir / f"github-trending-ai-weekly-{today}.html"
     index_path = output_dir / "index.html"
     html_path.write_text(html_text, encoding="utf-8")
     index_path.write_text(html_text, encoding="utf-8")
@@ -639,13 +567,18 @@ def generate(args: argparse.Namespace) -> None:
         "generated_at": generated_at,
         "source": TRENDING_URL,
         "html_file": html_path.name,
-        "topic_label": label,
-        "keywords": list(keywords),
+        "topic_label": "AI",
+        "limit": args.limit,
+        "history_window": args.history_window,
+        "skipped_by_history": skipped_count,
         "repos": [asdict(repo) for repo in repos],
     }
-    Path(args.summary_file).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.summary_file).write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"已生成 {index_path} 和 {html_path}，共 {len(repos)} 个项目。")
+    summary_path = Path(args.summary_file)
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    save_history(history_path, history, repos, generated_at, args.history_window, theme[0])
+    print(f"已生成 {index_path} 和 {html_path}，共 {len(repos)} 个项目，历史去重跳过 {skipped_count} 个项目。")
 
 
 def send_only(args: argparse.Namespace) -> None:
@@ -658,8 +591,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", default="site")
     parser.add_argument("--summary-file", default="site/report-summary.json")
-    parser.add_argument("--limit", type=int, default=7)
-    parser.add_argument("--key-words")
+    parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
+    parser.add_argument("--history-file", default="data/report-history.json")
+    parser.add_argument("--history-window", type=int, default=DEFAULT_HISTORY_WINDOW)
     parser.add_argument("--no-openai", action="store_true")
     parser.add_argument("--send-only", action="store_true")
     parser.add_argument("--public-url")

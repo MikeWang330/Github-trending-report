@@ -1,29 +1,24 @@
-name: GitHub Trending 自定义领域中文周报
+name: GitHub Trending AI 中文周报
 
 on:
   schedule:
-    # 每周一北京时间 10:30（UTC 02:30）
-    - cron: "30 2 * * 1"
+    # 每周一北京时间 10:00（UTC 02:00）
+    - cron: "0 2 * * 1"
   workflow_dispatch:
     inputs:
       limit:
         description: "入选项目数量"
         required: false
-        default: "7"
+        default: "8"
         type: string
       send_feishu:
         description: "是否发送飞书"
         required: false
         default: true
         type: boolean
-      key_words:
-        description: "筛选关键词，用逗号分隔；留空则使用 KEY_WORDS 配置或默认 AI 关键词"
-        required: false
-        default: ""
-        type: string
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -40,7 +35,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: 随机延迟（避免固定时间访问）
+      - name: 随机延迟
         run: sleep $((RANDOM % 60))
 
       - name: 检出代码
@@ -59,30 +54,26 @@ jobs:
 
       - name: 创建必要目录
         run: |
-          mkdir -p site reports logs
+          mkdir -p site reports logs data
 
-      - name: 生成 GitHub Trending 周报
+      - name: 生成 GitHub Trending AI 周报
         env:
-          REPORT_LIMIT: ${{ github.event.inputs.limit || vars.REPORT_LIMIT || '7' }}
-          KEY_WORDS: ${{ github.event.inputs.key_words || vars.KEY_WORDS || vars.key_words || secrets.KEY_WORDS || secrets.key_words }}
-          TOPIC_LABEL: ${{ vars.TOPIC_LABEL || vars.topic_label || secrets.TOPIC_LABEL || secrets.topic_label }}
+          REPORT_LIMIT: ${{ github.event.inputs.limit || vars.REPORT_LIMIT || '8' }}
           LOG_LEVEL: INFO
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || secrets.OPENAI_MODEL || 'gpt-4.1-mini' }}
         run: |
           echo "=========================================="
-          echo "🚀 GitHub Trending 自定义领域中文周报"
+          echo "GitHub Trending AI 中文周报"
           echo "=========================================="
-          echo "⏰ 时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
-          echo "📦 入选项目数量: $REPORT_LIMIT"
-          echo "🔎 筛选关键词: ${KEY_WORDS:-默认 AI 关键词}"
-          echo "🏷️ 主题名称: ${TOPIC_LABEL:-自动生成}"
-          echo "📡 数据来源: https://github.com/trending?since=weekly"
-          echo "🤖 OpenAI: $([ -n "$OPENAI_API_KEY" ] && echo '✅ 已配置' || echo '⚪ 未配置，将使用本地兜底文案')"
-          echo "🧠 模型: ${OPENAI_MODEL:-gpt-4.1-mini}"
+          echo "时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
+          echo "入选项目数量: $REPORT_LIMIT"
+          echo "数据来源: https://github.com/trending?since=weekly"
+          echo "OpenAI: $([ -n "$OPENAI_API_KEY" ] && echo '已配置' || echo '未配置，将使用本地兜底文案')"
+          echo "模型: ${OPENAI_MODEL:-gpt-4.1-mini}"
           echo "=========================================="
-          python main.py --output-dir site --summary-file site/report-summary.json --limit "$REPORT_LIMIT"
+          python main.py --output-dir site --summary-file site/report-summary.json --limit "$REPORT_LIMIT" --history-file data/report-history.json --history-window 4
           cp site/report-summary.json reports/report-summary.json
 
       - name: 配置 GitHub Pages
@@ -106,10 +97,19 @@ jobs:
           LARK_BOT_WEBHOOK: ${{ secrets.LARK_BOT_WEBHOOK }}
         run: |
           echo "=========================================="
-          echo "📋 通知配置检查"
+          echo "通知配置检查"
           echo "=========================================="
-          echo "  飞书: $(([ -n "$FEISHU_WEBHOOK_URL" ] || [ -n "$FEISHU_BOT_WEBHOOK" ] || [ -n "$LARK_BOT_WEBHOOK" ]) && echo '✅ 已配置' || echo '❌ 未配置')"
+          echo "飞书: $(([ -n "$FEISHU_WEBHOOK_URL" ] || [ -n "$FEISHU_BOT_WEBHOOK" ] || [ -n "$LARK_BOT_WEBHOOK" ]) && echo '已配置' || echo '未配置')"
           python main.py --send-only --require-webhook --summary-file site/report-summary.json --public-url "${{ steps.deployment.outputs.page_url }}"
+
+      - name: 保存跨周去重历史
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/report-history.json
+          git diff --cached --quiet || git commit -m "Update trending report history [skip ci]"
+          git push
 
       - name: 上传运行产物
         uses: actions/upload-artifact@v6
@@ -127,7 +127,7 @@ jobs:
         run: |
           echo ""
           echo "=========================================="
-          echo "📊 周报完成"
+          echo "周报完成"
           echo "=========================================="
           echo "公开页面: ${{ steps.deployment.outputs.page_url }}"
           if [ -d "site" ]; then
