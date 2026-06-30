@@ -1,0 +1,53 @@
+name: Weekly GitHub Trending Report
+
+on:
+  schedule:
+    # 10:30 every Monday in Asia/Shanghai.
+    - cron: "30 2 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-trending-pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate report
+        run: python scripts/generate_trending_report.py --output-dir site --summary-file site/report-summary.json --limit 15
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Send Feishu message
+        env:
+          FEISHU_BOT_WEBHOOK: ${{ secrets.FEISHU_BOT_WEBHOOK }}
+          LARK_BOT_WEBHOOK: ${{ secrets.LARK_BOT_WEBHOOK }}
+        run: python scripts/generate_trending_report.py --send-only --summary-file site/report-summary.json --public-url "${{ steps.deployment.outputs.page_url }}"
