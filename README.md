@@ -23,8 +23,15 @@
 
 推荐使用和 `daily_stock_analysis` 一致的变量名：
 
+- `OPENAI_API_KEY`：OpenAI API Key，用于生成更自然的中文解读
 - `FEISHU_WEBHOOK_URL`：飞书机器人 webhook 地址
 - `FEISHU_WEBHOOK_SECRET`：飞书签名密钥，可选
+
+可选变量：
+
+- `OPENAI_MODEL`：默认 `gpt-4.1-mini`
+- `OPENAI_BASE_URL`：默认 `https://api.openai.com`
+- `REPORT_LIMIT`：默认 `7`
 
 为了兼容旧配置，也支持：
 

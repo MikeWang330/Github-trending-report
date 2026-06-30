@@ -18,6 +18,7 @@ from time import time
 
 
 TRENDING_URL = "https://github.com/trending?since=weekly"
+OPENAI_RESPONSES_PATH = "/v1/responses"
 BEIJING = timezone(timedelta(hours=8))
 THEMES = [
     ("teal-mist", "#0f766e", "linear-gradient(135deg,#d9f7f2 0%,#f8fbff 45%,#e7f1ff 100%)"),
@@ -108,6 +109,96 @@ def parse_trending(page: str, limit: int) -> list[Repo]:
     return repos[:limit]
 
 
+def enrich_with_openai(repos: list[Repo]) -> list[Repo]:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print("未配置 OPENAI_API_KEY，使用本地规则生成中文解读。")
+        return repos
+
+    base_url = (os.getenv("OPENAI_BASE_URL") or "https://api.openai.com").rstrip("/")
+    model = os.getenv("OPENAI_MODEL") or "gpt-4.1-mini"
+    endpoint = f"{base_url}{OPENAI_RESPONSES_PATH}"
+    items = [
+        {
+            "name": repo.name,
+            "author": repo.author,
+            "description": repo.description,
+            "language": repo.language,
+            "stars": repo.stars,
+            "weekly_stars": repo.weekly_stars,
+            "url": repo.url,
+        }
+        for repo in repos
+    ]
+    prompt = (
+        "请把下面 GitHub Trending 项目改写成面向中文读者的周报解读。"
+        "要求：不要夸张营销，不要技术黑话堆砌；让产品、运营、研发都能看懂。"
+        "每个项目输出 JSON 字段：name, what, features, usage。"
+        "what 用一句话说明它是什么、解决什么问题；features 是 2-3 个短句；"
+        "usage 用通俗业务语言说明可以怎么用。只返回 JSON 数组。\n\n"
+        f"{json.dumps(items, ensure_ascii=False)}"
+    )
+    payload = {
+        "model": model,
+        "instructions": "你是一个擅长把开源项目讲清楚的中文技术编辑。",
+        "input": prompt,
+        "temperature": 0.55,
+    }
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read().decode("utf-8", errors="replace"))
+        text = extract_response_text(result)
+        enriched = json.loads(strip_json_fence(text))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        print(f"OpenAI 生成失败，使用本地规则兜底：{exc}")
+        return repos
+
+    by_name = {str(item.get("name", "")).lower(): item for item in enriched if isinstance(item, dict)}
+    for repo in repos:
+        item = by_name.get(repo.name.lower())
+        if not item:
+            continue
+        features = item.get("features")
+        if not isinstance(features, list):
+            features = repo.features
+        repo.what = str(item.get("what") or repo.what).strip()
+        repo.features = [str(feature).strip() for feature in features[:3] if str(feature).strip()] or repo.features
+        repo.usage = str(item.get("usage") or repo.usage).strip()
+    print(f"已使用 OpenAI Responses API 生成中文解读，模型：{model}")
+    return repos
+
+
+def extract_response_text(result: dict) -> str:
+    if result.get("output_text"):
+        return str(result["output_text"])
+    chunks: list[str] = []
+    for output in result.get("output", []):
+        for content in output.get("content", []):
+            if content.get("type") in {"output_text", "text"} and content.get("text"):
+                chunks.append(str(content["text"]))
+    if chunks:
+        return "\n".join(chunks)
+    raise KeyError("OpenAI response did not include output text")
+
+
+def strip_json_fence(text: str) -> str:
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    return text.strip()
+
+
 def explain_project(name: str, description: str, language: str) -> tuple[str, list[str], str]:
     text = f"{name} {description}".lower()
     rules = [
@@ -170,15 +261,16 @@ def render_html(repos: list[Repo], generated_at: str, theme: tuple[str, str, str
     :root {{ --ink:#172033; --muted:#647084; --line:rgba(23,32,51,.12); --panel:rgba(255,255,255,.9); --accent:{accent}; --soft:color-mix(in srgb, {accent} 12%, transparent); }}
     * {{ box-sizing:border-box; }}
     body {{ margin:0; color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Arial,sans-serif; background:{background}; letter-spacing:0; }}
-    .page {{ width:min(1120px,calc(100% - 32px)); margin:0 auto; padding:44px 0 36px; }}
+    .page {{ width:min(1120px,calc(100% - 32px)); margin:0 auto; padding:48px 0 40px; }}
     header {{ display:flex; justify-content:space-between; align-items:flex-end; gap:24px; margin-bottom:22px; padding-bottom:18px; border-bottom:1px solid var(--line); }}
     h1 {{ margin:0 0 10px; font-size:clamp(28px,4vw,44px); line-height:1.1; }}
     .meta, footer {{ color:var(--muted); font-size:14px; line-height:1.8; }}
     .count {{ min-width:210px; padding:16px 18px; border:1px solid var(--line); border-radius:8px; background:var(--panel); box-shadow:0 18px 48px rgba(23,32,51,.08); }}
     .count strong {{ display:block; font-size:30px; }}
     .grid {{ display:grid; gap:15px; }}
-    .card {{ border:1px solid var(--line); border-radius:8px; background:var(--panel); box-shadow:0 16px 48px rgba(23,32,51,.07); }}
-    .inner {{ padding:21px; }}
+    .card {{ border:1px solid var(--line); border-radius:8px; background:var(--panel); box-shadow:0 16px 48px rgba(23,32,51,.07); overflow:hidden; }}
+    .card::before {{ content:""; display:block; height:4px; background:linear-gradient(90deg,var(--accent),transparent); opacity:.9; }}
+    .inner {{ padding:22px; }}
     .top {{ display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }}
     a {{ color:var(--ink); text-decoration:none; }}
     a:hover {{ color:var(--accent); }}
@@ -188,7 +280,7 @@ def render_html(repos: list[Repo], generated_at: str, theme: tuple[str, str, str
     .pill {{ display:inline-flex; align-items:center; min-height:28px; padding:6px 10px; border-radius:999px; background:var(--soft); color:var(--accent); font-size:13px; font-weight:650; white-space:nowrap; }}
     .pill.gray {{ background:rgba(23,32,51,.06); color:#344057; }}
     p {{ margin:14px 0 0; color:#2d374b; line-height:1.75; font-size:15px; }}
-    .label {{ margin-top:14px; color:#243047; font-size:14px; font-weight:740; }}
+    .label {{ margin-top:15px; color:#243047; font-size:14px; font-weight:740; }}
     ul {{ margin:7px 0 0; padding-left:20px; color:#354157; line-height:1.7; font-size:14px; }}
     footer {{ margin-top:24px; padding-top:18px; border-top:1px solid var(--line); }}
     footer a {{ color:var(--accent); }}
@@ -200,14 +292,14 @@ def render_html(repos: list[Repo], generated_at: str, theme: tuple[str, str, str
     <header>
       <div>
         <h1>GitHub Trending 中文周报</h1>
-        <p class="meta">数据抓取时间：{html.escape(generated_at)}<br>范围：GitHub Trending Weekly，不限定领域，按本周新增 Star 降序整理。</p>
+        <p class="meta">数据抓取时间：{html.escape(generated_at)}<br>范围：GitHub Trending Weekly，不限定领域，默认精选 7 个项目。</p>
       </div>
       <div class="count"><strong>{len(repos)}</strong><span class="meta">个热门项目</span></div>
     </header>
     <section class="grid">
 {cards}
     </section>
-    <footer>数据来源：<a href="{TRENDING_URL}">GitHub Trending Weekly</a>。说明由脚本根据项目名称、简介、语言和关键词生成，用于快速了解项目价值；具体能力以项目仓库为准。</footer>
+    <footer>数据来源：<a href="{TRENDING_URL}">GitHub Trending Weekly</a>。中文解读优先由 OpenAI API 生成；未配置或调用失败时使用本地规则兜底，具体能力以项目仓库为准。</footer>
   </main>
 </body>
 </html>
@@ -285,6 +377,8 @@ def generate(args: argparse.Namespace) -> None:
     repos = parse_trending(page, args.limit)
     if not repos:
         raise RuntimeError("未能从 GitHub Trending 解析到项目。")
+    if not args.no_openai:
+        repos = enrich_with_openai(repos)
 
     theme = choose_theme(output_dir)
     html_text = render_html(repos, generated_at, theme)
@@ -314,7 +408,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", default="site")
     parser.add_argument("--summary-file", default="site/report-summary.json")
-    parser.add_argument("--limit", type=int, default=15)
+    parser.add_argument("--limit", type=int, default=7)
+    parser.add_argument("--no-openai", action="store_true")
     parser.add_argument("--send-only", action="store_true")
     parser.add_argument("--public-url")
     parser.add_argument("--require-webhook", action="store_true")

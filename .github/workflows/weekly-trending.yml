@@ -9,7 +9,7 @@ on:
       limit:
         description: "入选项目数量"
         required: false
-        default: "15"
+        default: "7"
         type: string
       send_feishu:
         description: "是否发送飞书"
@@ -58,8 +58,11 @@ jobs:
 
       - name: 生成 GitHub Trending 周报
         env:
-          REPORT_LIMIT: ${{ github.event.inputs.limit || vars.REPORT_LIMIT || '15' }}
+          REPORT_LIMIT: ${{ github.event.inputs.limit || vars.REPORT_LIMIT || '7' }}
           LOG_LEVEL: INFO
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || secrets.OPENAI_MODEL || 'gpt-4.1-mini' }}
         run: |
           echo "=========================================="
           echo "🚀 GitHub Trending 中文周报"
@@ -67,6 +70,8 @@ jobs:
           echo "⏰ 时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
           echo "📦 入选项目数量: $REPORT_LIMIT"
           echo "📡 数据来源: https://github.com/trending?since=weekly"
+          echo "🤖 OpenAI: $([ -n "$OPENAI_API_KEY" ] && echo '✅ 已配置' || echo '⚪ 未配置，将使用本地兜底文案')"
+          echo "🧠 模型: ${OPENAI_MODEL:-gpt-4.1-mini}"
           echo "=========================================="
           python main.py --output-dir site --summary-file site/report-summary.json --limit "$REPORT_LIMIT"
           cp site/report-summary.json reports/report-summary.json
