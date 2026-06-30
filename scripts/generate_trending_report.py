@@ -238,15 +238,24 @@ def build_feishu_text(summary: dict, public_url: str | None) -> str:
     return "\n".join(lines)
 
 
-def send_feishu(text: str) -> None:
+def send_feishu(text: str, require_webhook: bool = False) -> None:
     webhook = os.getenv("FEISHU_BOT_WEBHOOK") or os.getenv("LARK_BOT_WEBHOOK")
     if not webhook:
-        print("未配置 FEISHU_BOT_WEBHOOK 或 LARK_BOT_WEBHOOK，跳过飞书发送。")
+        message = "未配置 FEISHU_BOT_WEBHOOK 或 LARK_BOT_WEBHOOK，跳过飞书发送。"
+        if require_webhook:
+            raise RuntimeError(message)
+        print(message)
         return
     body = json.dumps({"msg_type": "text", "content": {"text": text}}, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(webhook, data=body, method="POST", headers={"Content-Type": "application/json; charset=utf-8"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         result = resp.read().decode("utf-8", errors="replace")
+    try:
+        payload = json.loads(result)
+        if payload.get("code") not in (0, None):
+            raise RuntimeError(f"飞书发送失败：{result}")
+    except json.JSONDecodeError:
+        pass
     print(f"飞书发送结果：{result}")
 
 
@@ -281,7 +290,7 @@ def generate(args: argparse.Namespace) -> None:
 def send_only(args: argparse.Namespace) -> None:
     summary = json.loads(Path(args.summary_file).read_text(encoding="utf-8"))
     text = build_feishu_text(summary, args.public_url)
-    send_feishu(text)
+    send_feishu(text, require_webhook=args.require_webhook)
 
 
 def main() -> int:
@@ -291,6 +300,7 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=15)
     parser.add_argument("--send-only", action="store_true")
     parser.add_argument("--public-url")
+    parser.add_argument("--require-webhook", action="store_true")
     args = parser.parse_args()
     try:
         if args.send_only:

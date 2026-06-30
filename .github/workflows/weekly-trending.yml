@@ -50,4 +50,4 @@ jobs:
         env:
           FEISHU_BOT_WEBHOOK: ${{ secrets.FEISHU_BOT_WEBHOOK }}
           LARK_BOT_WEBHOOK: ${{ secrets.LARK_BOT_WEBHOOK }}
-        run: python scripts/generate_trending_report.py --send-only --summary-file site/report-summary.json --public-url "${{ steps.deployment.outputs.page_url }}"
+        run: python scripts/generate_trending_report.py --send-only --require-webhook --summary-file site/report-summary.json --public-url "${{ steps.deployment.outputs.page_url }}"
