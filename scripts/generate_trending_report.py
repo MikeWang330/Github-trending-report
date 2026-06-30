@@ -257,29 +257,109 @@ def strip_json_fence(text: str) -> str:
 
 def explain_project(name: str, description: str, language: str) -> tuple[str, list[str], str]:
     text = f"{name} {description}".lower()
+    name_text = name.lower()
     rules = [
-        (("agent", "mcp", "llm", "ai", "gpt", "model"), "AI 工具", "帮助把大模型接入具体工作流，减少重复操作。", ["连接模型、工具和业务系统", "让 AI 根据上下文完成更具体的任务", "适合改造成内部助手或自动化流程"], "适合研发、运营、客服、数据团队，把查资料、整理信息、生成结果这类重复任务交给 AI 辅助完成。"),
-        (("pdf", "document", "doc"), "文档工具", "帮助更高效地处理文档、PDF 或办公资料。", ["提供常见文档处理能力", "适合批量处理和内部部署", "降低依赖外部网站上传文件的风险"], "适合行政、法务、财务、运营等经常处理文件的人，用来合并、转换、整理或自动化文档流程。"),
-        (("chat", "message", "messaging"), "沟通工具", "提供聊天、消息或团队沟通相关能力。", ["支持消息收发和会话管理", "关注隐私、安全或跨平台体验", "可作为团队沟通工具的参考"], "适合对隐私、安全或自部署有要求的团队，用来搭建更可控的沟通方案。"),
-        (("design", "ui", "figma", "prototype", "component"), "设计协作工具", "帮助团队更清楚地设计、复用和交付界面。", ["沉淀设计规范和组件规则", "方便产品、设计和研发对齐", "可用于快速制作原型或页面"], "适合产品、设计和前端团队，在做新页面或新产品前统一风格、减少返工。"),
-        (("crawler", "scraper", "monitor", "stock", "data"), "数据工具", "帮助自动收集、整理和观察公开数据。", ["自动抓取或监控信息源", "把分散数据整理成可分析内容", "适合做看板、提醒或研究材料"], "适合市场、运营、研究、风控团队，用来追踪热点、竞品、舆情或业务指标。"),
-        (("voice", "audio", "speech"), "语音工具", "帮助应用处理语音、音频或语音交互。", ["提供语音输入输出相关能力", "可接入语音助手或音频处理流程", "适合做原型验证"], "适合做语音客服、会议记录、口语练习、播客处理等场景的团队参考。"),
-        (("browser", "web", "page", "site", "website"), "网页工具", "帮助创建、理解、测试或自动操作网页。", ["围绕网页生成、分析或操作提供能力", "适合前端原型和自动化测试", "能减少重复网页操作"], "适合产品经理、前端开发、测试同学，用来快速做页面原型、检查网页或自动执行流程。"),
-        (("security", "cyber", "vulnerability"), "安全工具", "帮助团队更系统地发现、分析或处理安全问题。", ["提供安全检查或分析流程", "帮助整理风险线索和处置建议", "适合接入安全团队工作流"], "适合安全工程师、运维和研发团队，用来辅助排查风险、整理日志和形成处置清单。"),
+        (
+            ("video production", "video", "studio", "pipeline"),
+            "AI 视频生产系统",
+            "把脚本、素材处理、剪辑和生成流程整合成一套自动化视频制作工作台。",
+            ["提供多条视频制作流水线", "把不同制作工具封装成可调用能力", "让 AI 编程助手参与内容生产流程"],
+            "适合内容团队、短视频运营和开发者，用来搭建自动化视频生成、批量剪辑或创意生产工具。",
+        ),
+        (
+            ("clone", "website", "web site", "webpage"),
+            "AI 网页复刻模板",
+            "用 AI 编码 Agent 根据参考网站快速生成相似页面或原型。",
+            ["把网页复刻流程模板化", "适合快速生成前端页面代码", "可作为竞品分析和原型验证起点"],
+            "适合产品经理、前端开发和独立开发者，用来快速做落地页、竞品风格参考和演示原型。",
+        ),
+        (
+            ("codebase", "code intelligence", "mcp"),
+            "代码库记忆工具",
+            "把代码库索引成可查询的知识图谱，让 AI 助手更懂项目上下文。",
+            ["快速索引仓库结构和代码关系", "通过 MCP 给 AI 编程工具提供上下文", "减少大项目里反复解释代码背景的成本"],
+            "适合研发团队、架构师和 AI 编程重度用户，用来让助手快速理解老项目、排查代码和辅助重构。",
+        ),
+        (
+            ("twitter", "reddit", "youtube", "bilibili", "xiaohongshu", "entire internet", "search"),
+            "Agent 信息检索工具",
+            "让 AI Agent 能读取和搜索多个公开平台的信息，补足实时资料获取能力。",
+            ["聚合多个内容平台的信息读取", "用统一命令完成搜索和抓取", "避免为每个平台单独接入 API"],
+            "适合研究、运营、投研和舆情团队，用来让 AI 自动收集社媒、视频平台和代码社区的公开线索。",
+        ),
+        (
+            ("design system", "visual identity", "coding agents", "design.md"),
+            "AI 设计规范文档格式",
+            "用结构化文档描述品牌和界面规范，让 AI 编码工具生成更一致的页面。",
+            ["沉淀颜色、字体、组件和视觉规则", "给编码 Agent 提供稳定设计上下文", "减少 AI 生成页面时的风格漂移"],
+            "适合产品、设计和前端团队，在用 AI 生成页面或组件时保持统一品牌风格。",
+        ),
+        (
+            ("memory", "long-term memory", "knowledge graph", "persistent"),
+            "AI 长期记忆平台",
+            "为 AI Agent 提供可自托管的长期记忆和知识图谱能力。",
+            ["把文档和交互沉淀为可检索知识", "支持跨会话保留上下文", "让 Agent 在复杂任务里减少遗忘"],
+            "适合做企业知识助手、客服 Agent、研发助手和长期任务型 AI 应用的团队。",
+        ),
+        (
+            ("stock", "market", "news", "decision", "analysis"),
+            "AI 股票分析系统",
+            "把行情、新闻和大模型分析结合起来，生成自动化市场观察和决策参考。",
+            ["整合多源行情和实时新闻", "用 LLM 生成分析报告", "支持定时运行和自动推送"],
+            "适合个人投资者、研究员和量化/投研团队，用来做市场复盘、候选标的跟踪和信息整理。",
+        ),
+        (
+            ("voice", "audio", "speech"),
+            "AI 语音工具",
+            "围绕语音输入、音频处理或语音交互提供可复用能力。",
+            ["处理语音输入输出", "支持语音助手或音频工作流", "便于接入现有 AI 应用"],
+            "适合语音客服、会议记录、口语练习和音频内容处理场景。",
+        ),
+        (
+            ("security", "cyber", "vulnerability"),
+            "AI 安全分析工具",
+            "帮助团队更系统地把 AI 用到安全检查、日志分析和风险处置中。",
+            ["提供安全分析流程模板", "辅助整理风险线索和处置建议", "适合接入安全团队日常工作流"],
+            "适合安全工程师、运维和研发团队，用来辅助排查风险、整理日志和生成处置清单。",
+        ),
     ]
     for keys, category, summary, features, usage in rules:
-        if any(key in text for key in keys):
-            return f"{name} 是一个偏向{category}的开源项目，{summary}", features, usage
+        if any(key in text or key in name_text for key in keys):
+            return f"{name} 是一款{readable_category(category)}，{summary}", features, usage
 
     features = [
         "围绕 AI 应用开发提供可复用能力",
+        "把项目能力封装成更容易集成的工具",
         "适合开发者根据自己的业务继续改造",
-        "可以作为同类 AI 项目选型或学习参考",
     ]
     usage = "适合正在探索 AI 应用、模型工具或智能自动化的开发者和技术团队，用来快速验证想法并做业务定制。"
     if language and language != "未标注":
         features[0] = f"主要使用 {language} 构建，方便相同技术栈团队上手"
+    clean_desc = description.strip().rstrip(".。")
+    if clean_desc and clean_desc != "暂无公开简介":
+        return f"{name} 是一个 AI 相关开源项目，主要用于{plain_summary(clean_desc)}。", features, usage
     return f"{name} 是一个近期热度较高的 AI 相关开源项目，可以帮助开发者更快搭建或改进智能化工具。", features, usage
+
+
+def readable_category(category: str) -> str:
+    if re.match(r"^[A-Za-z]", category):
+        return f" {category}"
+    return category
+
+
+def plain_summary(description: str) -> str:
+    summary = re.sub(r"\s+", " ", description).strip()
+    replacements = {
+        "World's first open-source": "开源",
+        "open-source": "开源",
+        "AI": "AI",
+        "agentic": "智能体式",
+    }
+    for source, target in replacements.items():
+        summary = summary.replace(source, target)
+    if len(summary) > 72:
+        summary = summary[:72].rstrip() + "..."
+    return summary
 
 
 def choose_theme(output_dir: Path) -> tuple[str, str, str]:
@@ -377,11 +457,15 @@ def build_feishu_text(summary: dict, public_url: str | None) -> str:
         lines.append(f"公开页面：{public_url}")
     lines.append("")
     for index, repo in enumerate(summary["repos"], start=1):
+        features = repo.get("features") or []
+        feature_lines = [f"  - {feature}" for feature in features[:3]]
         lines.extend(
             [
                 f"{index}. {repo['name']}（+{repo['weekly_stars']:,}）",
                 repo["url"],
                 f"是什么：{repo['what']}",
+                "核心功能：",
+                *feature_lines,
                 f"适用场景：{repo['usage']}",
                 "",
             ]
