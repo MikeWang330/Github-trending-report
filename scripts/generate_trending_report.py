@@ -19,7 +19,7 @@ from time import time
 
 TRENDING_URL = "https://github.com/trending?since=weekly"
 OPENAI_RESPONSES_PATH = "/v1/responses"
-AI_KEYWORDS = (
+DEFAULT_KEYWORDS = (
     "ai",
     "artificial intelligence",
     "llm",
@@ -49,6 +49,7 @@ AI_KEYWORDS = (
     "mcp",
     "copilot",
 )
+DEFAULT_TOPIC_LABEL = "AI"
 BEIJING = timezone(timedelta(hours=8))
 THEMES = [
     ("teal-mist", "#0f766e", "linear-gradient(135deg,#d9f7f2 0%,#f8fbff 45%,#e7f1ff 100%)"),
@@ -139,17 +140,33 @@ def parse_trending(page: str) -> list[Repo]:
     return repos
 
 
-def filter_ai_repos(repos: list[Repo], limit: int) -> list[Repo]:
-    matched = [repo for repo in repos if ai_relevance_score(repo) > 0]
+def parse_keywords(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return DEFAULT_KEYWORDS
+    keywords = [item.strip().lower() for item in re.split(r"[,，\n;；]+", value) if item.strip()]
+    return tuple(dict.fromkeys(keywords)) or DEFAULT_KEYWORDS
+
+
+def topic_label(keywords: tuple[str, ...]) -> str:
+    configured = os.getenv("TOPIC_LABEL") or os.getenv("REPORT_TOPIC")
+    if configured:
+        return configured.strip()
+    if keywords == DEFAULT_KEYWORDS:
+        return DEFAULT_TOPIC_LABEL
+    return " / ".join(keyword.upper() if len(keyword) <= 4 else keyword.title() for keyword in keywords[:3])
+
+
+def filter_repos_by_keywords(repos: list[Repo], keywords: tuple[str, ...], limit: int) -> list[Repo]:
+    matched = [repo for repo in repos if keyword_relevance_score(repo, keywords) > 0]
     matched.sort(key=lambda item: item.weekly_stars, reverse=True)
     return matched[:limit]
 
 
-def ai_relevance_score(repo: Repo) -> int:
+def keyword_relevance_score(repo: Repo, keywords: tuple[str, ...]) -> int:
     text = f"{repo.name} {repo.author} {repo.description} {repo.language}".lower()
     tokens = set(re.findall(r"[a-z0-9]+", text))
     score = 0
-    for keyword in AI_KEYWORDS:
+    for keyword in keywords:
         if " " in keyword or "-" in keyword:
             if keyword in text:
                 score += 3
@@ -160,12 +177,12 @@ def ai_relevance_score(repo: Repo) -> int:
     # unless the project name itself clearly uses the term.
     repo_name = repo.name.lower()
     short_only = bool(tokens.intersection({"ai", "ml"})) and score <= 2
-    if short_only and not re.search(r"(^|[-_])(?:ai|ml)([-_]|$)", repo_name):
+    if keywords == DEFAULT_KEYWORDS and short_only and not re.search(r"(^|[-_])(?:ai|ml)([-_]|$)", repo_name):
         return 0
     return score
 
 
-def enrich_with_openai(repos: list[Repo]) -> list[Repo]:
+def enrich_with_openai(repos: list[Repo], label: str) -> list[Repo]:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         print("未配置 OPENAI_API_KEY，使用本地规则生成中文解读。")
@@ -187,7 +204,7 @@ def enrich_with_openai(repos: list[Repo]) -> list[Repo]:
         for repo in repos
     ]
     prompt = (
-        "请把下面 GitHub Trending Weekly 中筛选出的 AI 相关项目改写成面向中文读者的周报解读。"
+        f"请把下面 GitHub Trending Weekly 中筛选出的“{label}”相关项目改写成面向中文读者的周报解读。"
         "要求：不要夸张营销，不要技术黑话堆砌；让产品、运营、研发都能看懂。"
         "每个项目输出 JSON 字段：name, what, features, usage。"
         "what 用一句话说明它是什么、解决什么问题；features 是 2-3 个短句；"
@@ -384,15 +401,16 @@ def choose_theme(output_dir: Path) -> tuple[str, str, str]:
     return theme
 
 
-def render_html(repos: list[Repo], generated_at: str, theme: tuple[str, str, str]) -> str:
+def render_html(repos: list[Repo], generated_at: str, theme: tuple[str, str, str], label: str, keywords: tuple[str, ...]) -> str:
     _, accent, background = theme
     cards = "\n".join(render_card(repo) for repo in repos)
+    keyword_text = "、".join(keywords)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GitHub Trending AI 中文周报</title>
+  <title>GitHub Trending {html.escape(label)} 中文周报</title>
   <style>
     :root {{ --ink:#172033; --muted:#647084; --line:rgba(23,32,51,.12); --panel:rgba(255,255,255,.9); --accent:{accent}; --soft:color-mix(in srgb, {accent} 12%, transparent); }}
     * {{ box-sizing:border-box; }}
@@ -427,15 +445,15 @@ def render_html(repos: list[Repo], generated_at: str, theme: tuple[str, str, str
   <main class="page">
     <header>
       <div>
-        <h1>GitHub Trending AI 中文周报</h1>
-        <p class="meta">数据抓取时间：{html.escape(generated_at)}<br>范围：GitHub Trending Weekly 中的 AI 相关项目，按本周新增 Star 降序排列。</p>
+        <h1>GitHub Trending {html.escape(label)} 中文周报</h1>
+        <p class="meta">数据抓取时间：{html.escape(generated_at)}<br>范围：GitHub Trending Weekly 中匹配关键词“{html.escape(keyword_text)}”的项目，按本周新增 Star 降序排列。</p>
       </div>
-      <div class="count"><strong>{len(repos)}</strong><span class="meta">个 AI 热门项目</span></div>
+      <div class="count"><strong>{len(repos)}</strong><span class="meta">个相关热门项目</span></div>
     </header>
     <section class="grid">
 {cards}
     </section>
-    <footer>数据来源：<a href="{TRENDING_URL}">GitHub Trending Weekly</a>。筛选依据包含项目名、作者、简介、语言和 AI 相关关键词；中文解读优先由 OpenAI API 生成，具体能力以项目仓库为准。</footer>
+    <footer>数据来源：<a href="{TRENDING_URL}">GitHub Trending Weekly</a>。筛选依据包含项目名、作者、简介、语言和自定义 KEY_WORDS；中文解读优先由 OpenAI API 生成，具体能力以项目仓库为准。</footer>
   </main>
 </body>
 </html>
@@ -448,10 +466,13 @@ def render_card(repo: Repo) -> str:
 
 
 def build_feishu_text(summary: dict, public_url: str | None) -> str:
+    label = summary.get("topic_label", DEFAULT_TOPIC_LABEL)
+    keywords = summary.get("keywords") or list(DEFAULT_KEYWORDS)
     lines = [
-        "GitHub Trending AI 中文周报",
+        f"GitHub Trending {label} 中文周报",
         f"抓取时间：{summary['generated_at']}",
         f"项目数量：{len(summary['repos'])} 个",
+        f"筛选关键词：{'、'.join(keywords)}",
     ]
     if public_url:
         lines.append(f"公开页面：{public_url}")
@@ -515,14 +536,16 @@ def generate(args: argparse.Namespace) -> None:
     today = datetime.now(BEIJING).strftime("%Y-%m-%d")
     page = fetch(TRENDING_URL)
     all_repos = parse_trending(page)
-    repos = filter_ai_repos(all_repos, args.limit)
+    keywords = parse_keywords(args.key_words or os.getenv("KEY_WORDS"))
+    label = topic_label(keywords)
+    repos = filter_repos_by_keywords(all_repos, keywords, args.limit)
     if not repos:
-        raise RuntimeError("未能从 GitHub Trending Weekly 筛选到 AI 相关项目。")
+        raise RuntimeError(f"未能从 GitHub Trending Weekly 筛选到匹配 KEY_WORDS 的项目：{', '.join(keywords)}")
     if not args.no_openai:
-        repos = enrich_with_openai(repos)
+        repos = enrich_with_openai(repos, label)
 
     theme = choose_theme(output_dir)
-    html_text = render_html(repos, generated_at, theme)
+    html_text = render_html(repos, generated_at, theme, label, keywords)
     html_path = output_dir / f"github-trending-weekly-{today}.html"
     index_path = output_dir / "index.html"
     html_path.write_text(html_text, encoding="utf-8")
@@ -532,6 +555,8 @@ def generate(args: argparse.Namespace) -> None:
         "generated_at": generated_at,
         "source": TRENDING_URL,
         "html_file": html_path.name,
+        "topic_label": label,
+        "keywords": list(keywords),
         "repos": [asdict(repo) for repo in repos],
     }
     Path(args.summary_file).parent.mkdir(parents=True, exist_ok=True)
@@ -550,6 +575,7 @@ def main() -> int:
     parser.add_argument("--output-dir", default="site")
     parser.add_argument("--summary-file", default="site/report-summary.json")
     parser.add_argument("--limit", type=int, default=7)
+    parser.add_argument("--key-words")
     parser.add_argument("--no-openai", action="store_true")
     parser.add_argument("--send-only", action="store_true")
     parser.add_argument("--public-url")

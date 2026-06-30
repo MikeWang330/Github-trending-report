@@ -16,6 +16,11 @@ on:
         required: false
         default: true
         type: boolean
+      key_words:
+        description: "筛选关键词，用逗号分隔；留空则使用 KEY_WORDS 配置或默认 AI 关键词"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -59,6 +64,8 @@ jobs:
       - name: 生成 GitHub Trending 周报
         env:
           REPORT_LIMIT: ${{ github.event.inputs.limit || vars.REPORT_LIMIT || '7' }}
+          KEY_WORDS: ${{ github.event.inputs.key_words || vars.KEY_WORDS || secrets.KEY_WORDS }}
+          TOPIC_LABEL: ${{ vars.TOPIC_LABEL || secrets.TOPIC_LABEL }}
           LOG_LEVEL: INFO
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}
@@ -68,7 +75,9 @@ jobs:
           echo "🚀 GitHub Trending AI 中文周报"
           echo "=========================================="
           echo "⏰ 时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
-          echo "📦 AI 入选项目数量: $REPORT_LIMIT"
+          echo "📦 入选项目数量: $REPORT_LIMIT"
+          echo "🔎 筛选关键词: ${KEY_WORDS:-默认 AI 关键词}"
+          echo "🏷️ 主题名称: ${TOPIC_LABEL:-自动生成}"
           echo "📡 数据来源: https://github.com/trending?since=weekly"
           echo "🤖 OpenAI: $([ -n "$OPENAI_API_KEY" ] && echo '✅ 已配置' || echo '⚪ 未配置，将使用本地兜底文案')"
           echo "🧠 模型: ${OPENAI_MODEL:-gpt-4.1-mini}"
