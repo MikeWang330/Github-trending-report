@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 import argparse
+import base64
+import hashlib
+import hmac
 import html
 import json
 import os
@@ -11,6 +14,7 @@ import urllib.request
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from time import time
 
 
 TRENDING_URL = "https://github.com/trending?since=weekly"
@@ -239,14 +243,27 @@ def build_feishu_text(summary: dict, public_url: str | None) -> str:
 
 
 def send_feishu(text: str, require_webhook: bool = False) -> None:
-    webhook = os.getenv("FEISHU_BOT_WEBHOOK") or os.getenv("LARK_BOT_WEBHOOK")
+    webhook = (
+        os.getenv("FEISHU_WEBHOOK_URL")
+        or os.getenv("FEISHU_BOT_WEBHOOK")
+        or os.getenv("LARK_BOT_WEBHOOK")
+    )
     if not webhook:
-        message = "未配置 FEISHU_BOT_WEBHOOK 或 LARK_BOT_WEBHOOK，跳过飞书发送。"
+        message = "未配置 FEISHU_WEBHOOK_URL、FEISHU_BOT_WEBHOOK 或 LARK_BOT_WEBHOOK，跳过飞书发送。"
         if require_webhook:
             raise RuntimeError(message)
         print(message)
         return
-    body = json.dumps({"msg_type": "text", "content": {"text": text}}, ensure_ascii=False).encode("utf-8")
+    payload = {"msg_type": "text", "content": {"text": text}}
+    secret = os.getenv("FEISHU_WEBHOOK_SECRET") or os.getenv("LARK_BOT_SECRET") or os.getenv("FEISHU_BOT_SECRET")
+    if secret:
+        timestamp = str(int(time()))
+        string_to_sign = f"{timestamp}\n{secret}".encode("utf-8")
+        payload["timestamp"] = timestamp
+        payload["sign"] = base64.b64encode(
+            hmac.new(string_to_sign, b"", digestmod=hashlib.sha256).digest()
+        ).decode("utf-8")
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(webhook, data=body, method="POST", headers={"Content-Type": "application/json; charset=utf-8"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         result = resp.read().decode("utf-8", errors="replace")

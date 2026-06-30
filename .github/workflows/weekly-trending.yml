@@ -1,10 +1,21 @@
-name: Weekly GitHub Trending Report
+name: GitHub Trending 中文周报
 
 on:
   schedule:
-    # 10:30 every Monday in Asia/Shanghai.
+    # 每周一北京时间 10:30（UTC 02:30）
     - cron: "30 2 * * 1"
   workflow_dispatch:
+    inputs:
+      limit:
+        description: "入选项目数量"
+        required: false
+        default: "15"
+        type: string
+      send_feishu:
+        description: "是否发送飞书"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -12,42 +23,100 @@ permissions:
   id-token: write
 
 concurrency:
-  group: github-trending-pages
-  cancel-in-progress: true
+  group: github-trending-report
+  cancel-in-progress: false
 
 jobs:
-  build-and-publish:
+  analyze:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: 随机延迟（避免固定时间访问）
+        run: sleep $((RANDOM % 60))
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.11"
+          cache: "pip"
 
-      - name: Generate report
-        run: python scripts/generate_trending_report.py --output-dir site --summary-file site/report-summary.json --limit 15
+      - name: 安装依赖
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Configure Pages
+      - name: 创建必要目录
+        run: |
+          mkdir -p site reports logs
+
+      - name: 生成 GitHub Trending 周报
+        env:
+          REPORT_LIMIT: ${{ github.event.inputs.limit || vars.REPORT_LIMIT || '15' }}
+          LOG_LEVEL: INFO
+        run: |
+          echo "=========================================="
+          echo "🚀 GitHub Trending 中文周报"
+          echo "=========================================="
+          echo "⏰ 时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
+          echo "📦 入选项目数量: $REPORT_LIMIT"
+          echo "📡 数据来源: https://github.com/trending?since=weekly"
+          echo "=========================================="
+          python main.py --output-dir site --summary-file site/report-summary.json --limit "$REPORT_LIMIT"
+          cp site/report-summary.json reports/report-summary.json
+
+      - name: 配置 GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Upload Pages artifact
+      - name: 上传 Pages 构建产物
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
-      - name: Deploy to GitHub Pages
+      - name: 发布到 GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Send Feishu message
+      - name: 发送飞书消息
+        if: ${{ github.event.inputs.send_feishu != 'false' }}
         env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          FEISHU_WEBHOOK_SECRET: ${{ secrets.FEISHU_WEBHOOK_SECRET }}
           FEISHU_BOT_WEBHOOK: ${{ secrets.FEISHU_BOT_WEBHOOK }}
           LARK_BOT_WEBHOOK: ${{ secrets.LARK_BOT_WEBHOOK }}
-        run: python scripts/generate_trending_report.py --send-only --require-webhook --summary-file site/report-summary.json --public-url "${{ steps.deployment.outputs.page_url }}"
+        run: |
+          echo "=========================================="
+          echo "📋 通知配置检查"
+          echo "=========================================="
+          echo "  飞书: $(([ -n "$FEISHU_WEBHOOK_URL" ] || [ -n "$FEISHU_BOT_WEBHOOK" ] || [ -n "$LARK_BOT_WEBHOOK" ]) && echo '✅ 已配置' || echo '❌ 未配置')"
+          python main.py --send-only --require-webhook --summary-file site/report-summary.json --public-url "${{ steps.deployment.outputs.page_url }}"
+
+      - name: 上传运行产物
+        uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: trending-report-${{ github.run_number }}
+          path: |
+            reports/
+            logs/
+            site/report-summary.json
+          retention-days: 30
+
+      - name: 显示运行结果
+        if: always()
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "📊 周报完成"
+          echo "=========================================="
+          echo "公开页面: ${{ steps.deployment.outputs.page_url }}"
+          if [ -d "site" ]; then
+            echo "生成文件:"
+            ls -la site/
+          fi
