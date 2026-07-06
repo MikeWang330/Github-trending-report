@@ -14,6 +14,21 @@
         "jcodesmore/ai-website-cloner-template",
         "mukul975/anthropic-cybersecurity-skills"
       ]
+    },
+    {
+      "date": "2026-07-06",
+      "generated_at": "2026-07-06 14:18:12 +08:00",
+      "theme": "blue-coral",
+      "repos": [
+        "msitarzewski/agency-agents",
+        "xbtlin/ai-berkshire",
+        "diegosouzapw/omniroute",
+        "browser-use/video-use",
+        "ogulcancelik/herdr",
+        "stablyai/orca",
+        "alibaba/page-agent",
+        "robbyant/lingbot-map"
+      ]
     }
   ]
 }
