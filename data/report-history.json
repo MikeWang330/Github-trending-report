@@ -44,6 +44,21 @@
         "wonderwhy-er/desktopcommandermcp",
         "tt-a1i/archify"
       ]
+    },
+    {
+      "date": "2026-07-20",
+      "generated_at": "2026-07-20 13:29:26 +08:00",
+      "theme": "slate-rose",
+      "repos": [
+        "mattpocock/skills",
+        "shubhamsaboo/awesome-llm-apps",
+        "hkuds/vibe-trading",
+        "earendil-works/pi",
+        "openinterpreter/openinterpreter",
+        "openai/codex",
+        "kangarooking/cangjie-skill",
+        "tirth8205/code-review-graph"
+      ]
     }
   ]
 }
