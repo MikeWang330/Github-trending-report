@@ -1,21 +1,6 @@
 {
   "recent_reports": [
     {
-      "date": "2026-06-30",
-      "generated_at": "2026-06-30 18:55:33 +08:00",
-      "theme": "teal-mist",
-      "repos": [
-        "calesthio/openmontage",
-        "deusdata/codebase-memory-mcp",
-        "panniantong/agent-reach",
-        "google-labs-code/design.md",
-        "topoteretes/cognee",
-        "zhulinsen/daily_stock_analysis",
-        "jcodesmore/ai-website-cloner-template",
-        "mukul975/anthropic-cybersecurity-skills"
-      ]
-    },
-    {
       "date": "2026-07-06",
       "generated_at": "2026-07-06 14:18:12 +08:00",
       "theme": "blue-coral",
@@ -58,6 +43,20 @@
         "openai/codex",
         "kangarooking/cangjie-skill",
         "tirth8205/code-review-graph"
+      ]
+    },
+    {
+      "date": "2026-07-27",
+      "generated_at": "2026-07-27 13:39:01 +08:00",
+      "theme": "teal-mist",
+      "repos": [
+        "bojieli/ai-agent-book",
+        "rohitg00/ai-engineering-from-scratch",
+        "earthtojake/text-to-cad",
+        "shiyu-coder/kronos",
+        "agegr/pi-web",
+        "moonshotai/kimi-code",
+        "moonshotai/kimi-cli"
       ]
     }
   ]
