@@ -1,21 +1,6 @@
 {
   "recent_reports": [
     {
-      "date": "2026-07-06",
-      "generated_at": "2026-07-06 14:18:12 +08:00",
-      "theme": "blue-coral",
-      "repos": [
-        "msitarzewski/agency-agents",
-        "xbtlin/ai-berkshire",
-        "diegosouzapw/omniroute",
-        "browser-use/video-use",
-        "ogulcancelik/herdr",
-        "stablyai/orca",
-        "alibaba/page-agent",
-        "robbyant/lingbot-map"
-      ]
-    },
-    {
       "date": "2026-07-13",
       "generated_at": "2026-07-13 13:24:34 +08:00",
       "theme": "forest-gold",
@@ -57,6 +42,18 @@
         "agegr/pi-web",
         "moonshotai/kimi-code",
         "moonshotai/kimi-cli"
+      ]
+    },
+    {
+      "date": "2026-08-03",
+      "generated_at": "2026-08-03 13:30:19 +08:00",
+      "theme": "blue-coral",
+      "repos": [
+        "microsoft/ai-for-beginners",
+        "ayghri/i-have-adhd",
+        "alibaba/open-code-review",
+        "citrolabs/ego-lite",
+        "moeru-ai/airi"
       ]
     }
   ]
